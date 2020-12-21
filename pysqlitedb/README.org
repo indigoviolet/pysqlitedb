@@ -1,0 +1,4 @@
+
+* pysqlitedb
+
+Simple wrapper for sqlite3 dbs.
