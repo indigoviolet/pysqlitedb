@@ -5,7 +5,7 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Literal
+from typing import Any, Dict, Generator, Iterable, List, Literal, Optional
 
 import attr
 import pytz
@@ -42,15 +42,21 @@ class DB:
             yield d
 
     @cached_property
-    def conn(self):
+    def conn(self) -> sqlite3.Connection:
         con = sqlite3.connect(str(self.db_file), isolation_level=None)
         con.row_factory = sqlite3.Row
         for p in ["journal_mode=wal"] + self.pragmas:
-            self.execute(f"pragma {p}")
+            self.execute(f"pragma {p}", conn=con)
+        return con
 
-    def execute(self, statement: str, values: Iterable[Any] = []):
+    def execute(
+        self,
+        statement: str,
+        values: Iterable[Any] = [],
+        conn: Optional[sqlite3.Connection] = None,
+    ):
         values = [self.value_for_db(v) for v in values]
-        return self.conn.execute(statement, values)
+        return (conn or self.conn).execute(statement, values)
 
     @singledispatchmethod
     def value_for_db(self, v: Any):
@@ -64,15 +70,16 @@ class DB:
     def close(self):
         self.conn.close()
 
-    def setup(self):
+    def setup(self) -> DB:
         for t in self.tables:
             t.create(self)
+        return self
 
     def update_row(
         self, tablename: str, values: Dict[str, Any], where: Dict[str, Any]
     ) -> None:
         values = {
-            "updated_at": now_for_db(),
+            "updated_at": self.utcnow(),
             **values,
         }
         self.execute(
@@ -90,12 +97,15 @@ class DB:
         # uniform format for all timestamps, CURRENT_TIMESTAMP is not
         # timezone-aware -- assuming every table will want created_at
         values = {
-            "created_at": now_for_db(),
+            "created_at": self.utcnow(),
             **values,
         }
         self.execute(
             insert_sql(tablename, values, fallback=fallback), tuple(values.values()),
         )
+
+    def utcnow(self) -> datetime:
+        return datetime.now().astimezone(pytz.UTC)
 
 
 def insert_sql(tablename: str, values: Dict[str, Any], fallback: InsertFallback) -> str:
@@ -117,7 +127,3 @@ def create_table_sql(table: Table) -> str:
     return f"""CREATE TABLE IF NOT EXISTS {table.name} (
         {column_defs}
     )"""
-
-
-def now_for_db() -> datetime:
-    return datetime.now().astimezone(pytz.UTC)
