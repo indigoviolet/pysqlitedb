@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from functools import cached_property, singledispatchmethod
@@ -54,8 +55,11 @@ class DB:
         statement: str,
         values: Iterable[Any] = [],
         conn: Optional[sqlite3.Connection] = None,
-    ):
-        values = [self.value_for_db(v) for v in values]
+    ) -> sqlite3.Cursor:
+        if isinstance(values, Mapping):
+            values = {k: self.value_for_db(v) for k, v in values.items()}
+        else:
+            values = [self.value_for_db(v) for v in values]
         return (conn or self.conn).execute(statement, values)
 
     @singledispatchmethod
@@ -64,7 +68,9 @@ class DB:
 
     @value_for_db.register
     def _(self, v: datetime):
-        assert v.utcoffset() == timedelta(0), "Must be UTC"
+        assert v.utcoffset() is None or v.utcoffset() == timedelta(
+            0
+        ), f"Must be UTC: got {v=} {v.utcoffset()=}"
         return v.astimezone(pytz.UTC).isoformat()
 
     def close(self):
